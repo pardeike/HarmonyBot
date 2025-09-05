@@ -15,7 +15,10 @@ public sealed class Config
 	[Configuration(confidential: true)] public required string OpenAIApiKey { get; init; }
 
 	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-4o");
-	[Configuration] public string LlmPackDir { get; init; } = GetEnvString("LLM_PACK_DIR", "");
+	[Configuration] public string LlmPackUri { get; init; } = GetEnvString("LLM_PACK_URI", "https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl");
+	[Configuration] public string LlmPackDir { get; init; } = GetEnvString("LLM_PACK_DIR", Directory.CreateTempSubdirectory().FullName);
+
+	[Configuration] public int MaxCardCount { get; init; } = GetEnvInt("MAX_CARD_COUNT", 10);
 
 	[Configuration] public int GroupMaxGapSec { get; init; } = GetEnvInt("GROUP_MAX_GAP_SEC", 300); // 5 min
 	[Configuration] public int GroupMaxDurationSec { get; init; } = GetEnvInt("GROUP_MAX_DURATION_SEC", 1800); // 30 min

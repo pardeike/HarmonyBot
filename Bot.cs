@@ -13,7 +13,7 @@ public sealed class Bot
 	private readonly Config _cfg;
 	private readonly DiscordSocketClient _client;
 	private readonly OpenAIResponseClient _chat;
-	private readonly LlmPackIndex _llm;
+	private LlmPackIndex _llm = new([]);
 
 	private readonly ILoggerFactory _loggerFactory;
 	private readonly ILogger _log;
@@ -74,7 +74,11 @@ public sealed class Bot
 		_chat = new OpenAIResponseClient(_cfg.ChatModel, _cfg.OpenAIApiKey);
 
 		// Optional Harmony reference pack
-		_llm = LlmPackIndex.TryLoad(_cfg.LlmPackDir);
+		_ = Task.Run(async () =>
+		{
+			if (await LlmPackIndex.DownloadCards(_cfg, _log))
+				_llm = LlmPackIndex.LoadAsync(_cfg, _log);
+		});
 	}
 
 	public async Task RunAsync()
@@ -379,10 +383,12 @@ public sealed class Bot
 		var last = contextBlock.Split('\n', StringSplitOptions.RemoveEmptyEntries)
 									  .LastOrDefault(l => l.Contains(" <<TARGET>>")) ?? contextBlock;
 		var query = last.Replace(" <<TARGET>>", "");
-		var hits = _llm.Search(query, k: 4);
+		var hits = _llm.Search(query, k: _cfg.MaxCardCount);
 		ragHits = hits.Count;
 		if (ragHits == 0)
 			return "";
+
+		_log.LogInformation("Using {cardCount} cards as context", ragHits);
 
 		var sb = new StringBuilder().AppendLine("Harmony reference hints (selected):");
 		foreach (var h in hits)

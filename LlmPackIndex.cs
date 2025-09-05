@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -25,44 +26,47 @@ public sealed class LlmPackIndex
 	private readonly List<Card> _cards;
 	public bool IsLoaded => _cards.Count > 0;
 
-	private LlmPackIndex(List<Card> cards) => _cards = cards;
+	public LlmPackIndex(List<Card> cards) => _cards = cards;
 
-	public static LlmPackIndex TryLoad(string hintDir)
+	public static async Task<bool> DownloadCards(Config cfg, ILogger log)
 	{
-		static IEnumerable<string> Candidates(string hint)
-		{
-			if (!string.IsNullOrWhiteSpace(hint))
-				yield return hint;
-			// common local paths
-			yield return "./llm-pack";
-			yield return "../Harmony/llm-pack";
-			var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-			yield return Path.Combine(home, "Harmony", "llm-pack");
-		}
+		_ = Directory.CreateDirectory(cfg.LlmPackDir);
+		var jsonl = Path.Combine(cfg.LlmPackDir, "harmony.cards.jsonl");
+		using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+		using var resp = await http.GetAsync(cfg.LlmPackUri, HttpCompletionOption.ResponseHeadersRead);
+		log.LogInformation("LLM pack download: {status}", resp.StatusCode);
+		if (!resp.IsSuccessStatusCode)
+			return false;
+		await using var contentStream = await resp.Content.ReadAsStreamAsync();
+		await using var fs = new FileStream(jsonl, FileMode.OpenOrCreate, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+		await contentStream.CopyToAsync(fs);
+		await fs.FlushAsync();
+		log.LogInformation("LLM pack saved to {Dest}", jsonl);
+		return true;
+	}
 
-		foreach (var dir in Candidates(hintDir))
-			try
+	public static LlmPackIndex LoadAsync(Config cfg, ILogger log)
+	{
+		var jsonl = Path.Combine(cfg.LlmPackDir, "harmony.cards.jsonl");
+		if (File.Exists(jsonl))
+		{
+			var cards = new List<Card>(capacity: 2048);
+			foreach (var line in File.ReadLines(jsonl))
 			{
-				var jsonl = Path.Combine(dir, "harmony.cards.jsonl");
-				if (!File.Exists(jsonl))
+				if (string.IsNullOrWhiteSpace(line))
 					continue;
-				var cards = new List<Card>(capacity: 2048);
-				foreach (var line in File.ReadLines(jsonl))
-				{
-					if (string.IsNullOrWhiteSpace(line))
-						continue;
-					var c = JsonSerializer.Deserialize<Card>(line);
-					if (c is not null)
-						cards.Add(c);
-				}
-				return new LlmPackIndex(cards);
+				var c = JsonSerializer.Deserialize<Card>(line);
+				if (c is not null)
+					cards.Add(c);
 			}
-			catch { /* ignore and continue */ }
+			log.LogInformation("LLM pack created {cardCount} cards", cards.Count);
+			return new LlmPackIndex(cards);
+		}
 		return new LlmPackIndex([]);
 	}
 
 	// Naive lexical top‑k (fast + no embeddings needed). Good enough as a hint layer.
-	public IReadOnlyList<Card> Search(string query, int k = 5)
+	public IReadOnlyList<Card> Search(string query, int k)
 	{
 		if (!IsLoaded)
 			return [];
