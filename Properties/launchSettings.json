@@ -2,10 +2,7 @@
   "profiles": {
     "HarmonyBot": {
       "commandName": "Project",
-      "workingDirectory": "C:\\Users\\Brrainz\\Source\\Repos\\HarmonyBot",
-      "environmentVariables": {
-        "CHAT_MODEL": "gpt-5"
-      }
+      "workingDirectory": "C:\\Users\\Brrainz\\Source\\Repos\\HarmonyBot"
     }
   }
 }

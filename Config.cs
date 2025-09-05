@@ -6,7 +6,7 @@ namespace HarmonyBot;
 [AttributeUsage(AttributeTargets.Property)]
 public class ConfigurationAttribute(bool confidential = false) : Attribute
 {
-	private readonly bool confidential = confidential;
+	public readonly bool confidential = confidential;
 }
 
 public sealed class Config
@@ -28,12 +28,9 @@ public sealed class Config
 	public string Summary => string.Join(", ", GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
 		.Select(p =>
 		{
-			var cad = p.CustomAttributes.FirstOrDefault(a => a.AttributeType == typeof(ConfigurationAttribute));
+			var cad = p.GetCustomAttribute<ConfigurationAttribute>();
 			if (cad == null)
 				return null;
-			bool confidential = false;
-			if (cad.ConstructorArguments.Count > 0 && cad.ConstructorArguments[0].ArgumentType == typeof(bool))
-				confidential = cad.ConstructorArguments[0].Value is bool b && b;
 			var rawValue = p.GetValue(this);
 			string strVal = rawValue switch
 			{
@@ -41,7 +38,7 @@ public sealed class Config
 				bool bb => bb ? "true" : "false",
 				_ => rawValue.ToString() ?? ""
 			};
-			if (confidential)
+			if (cad.confidential)
 				strVal = "***";
 			return $"{p.Name}={strVal}";
 		})
