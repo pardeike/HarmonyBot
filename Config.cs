@@ -57,7 +57,7 @@ public sealed class Config
 		if (!File.Exists(path))
 			throw new FileNotFoundException($"Cannot find API keys file at {path}. Expected JSON: {{\"DISCORD_TOKEN\":\"...\",\"OPENAI_API_KEY\":\"...\"}}");
 
-		var json = JsonDocument.Parse(File.ReadAllText(path));
+		using var json = JsonDocument.Parse(File.ReadAllText(path));
 		var root = json.RootElement;
 		var discord = root.GetProperty("DISCORD_TOKEN").GetString() ?? "";
 		var openai = root.GetProperty("OPENAI_API_KEY").GetString() ?? "";
