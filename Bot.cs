@@ -43,6 +43,8 @@ public sealed class Bot
 		_logAiContent = (Environment.GetEnvironmentVariable("LOG_AI_CONTENT") ?? "truncated").ToLowerInvariant();
 		_logAiContentMax = int.TryParse(Environment.GetEnvironmentVariable("LOG_AI_CONTENT_MAX"), out var n) ? n : 4000;
 
+		_log.LogInformation("Configuration:\n{configuration}", _cfg.Summary);
+
 		_client = new DiscordSocketClient(new DiscordSocketConfig
 		{
 			GatewayIntents =
@@ -131,13 +133,6 @@ public sealed class Bot
 	private async Task OnMessageCommandAsync(SocketMessageCommand cmd)
 	{
 		await cmd.DeferAsync(ephemeral: true); // acknowledge; single ephemeral preview “slot”
-
-		if (!IsOwner(cmd.User.Id))
-		{
-			await cmd.ModifyOriginalResponseAsync(m => m.Content = "Owner‑only.");
-			_log.LogWarning("message-cmd.denied owner-only");
-			return;
-		}
 
 		var anchor = cmd.Data.Message; // IMessage
 		if (anchor is null)
@@ -458,11 +453,4 @@ public sealed class Bot
 
 	private static string Clamp(string s, int max = 2000)
 		 => s.Length <= max ? s : s[..(max - 2)] + " …";
-
-	private bool IsOwner(ulong userId)
-	{
-		if (string.IsNullOrWhiteSpace(_cfg.OwnerUserId))
-			return true;
-		return ulong.TryParse(_cfg.OwnerUserId, out var ownerId) && userId == ownerId;
-	}
 }

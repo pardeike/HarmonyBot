@@ -1,28 +1,53 @@
+using System.Reflection;
 using System.Text.Json;
 
 namespace HarmonyBot;
 
+[AttributeUsage(AttributeTargets.Property)]
+public class ConfigurationAttribute(bool confidential = false) : Attribute
+{
+	private readonly bool confidential = confidential;
+}
+
 public sealed class Config
 {
-	public required string DiscordToken { get; init; }
-	public required string OpenAIApiKey { get; init; }
+	[Configuration(confidential: true)] public required string DiscordToken { get; init; }
+	[Configuration(confidential: true)] public required string OpenAIApiKey { get; init; }
 
-	public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-4o");
-	public string? OwnerUserId { get; init; } = GetEnvString("OWNER_USER_ID", "");
+	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-4o");
+	[Configuration] public string LlmPackDir { get; init; } = GetEnvString("LLM_PACK_DIR", "");
 
-	public int ContextBefore { get; init; } = GetEnvInt("CTX_BEFORE", 6);
-	public int ContextAfter { get; init; } = GetEnvInt("CTX_AFTER", 2);
+	[Configuration] public int GroupMaxGapSec { get; init; } = GetEnvInt("GROUP_MAX_GAP_SEC", 300); // 5 min
+	[Configuration] public int GroupMaxDurationSec { get; init; } = GetEnvInt("GROUP_MAX_DURATION_SEC", 1800); // 30 min
+	[Configuration] public int GroupMaxInterposts { get; init; } = GetEnvInt("GROUP_MAX_INTERPOSTS", 6);
+	[Configuration] public int CtxPrependBefore { get; init; } = GetEnvInt("CTX_PREPEND_BEFORE", 3);
+	[Configuration] public int CtxMaxMessages { get; init; } = GetEnvInt("CTX_MAX_MESSAGES", 60);
+	[Configuration] public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 12000);
+	[Configuration] public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", false);
 
-	public string LlmPackDir { get; init; } = GetEnvString("LLM_PACK_DIR", "");
-
-	public int GroupMaxGapSec { get; init; } = GetEnvInt("GROUP_MAX_GAP_SEC", 300); // 5 min
-	public int GroupMaxDurationSec { get; init; } = GetEnvInt("GROUP_MAX_DURATION_SEC", 1800); // 30 min
-	public int GroupMaxInterposts { get; init; } = GetEnvInt("GROUP_MAX_INTERPOSTS", 6);
-	public int CtxPrependBefore { get; init; } = GetEnvInt("CTX_PREPEND_BEFORE", 3);
-	public int CtxMaxMessages { get; init; } = GetEnvInt("CTX_MAX_MESSAGES", 60);
-	public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 12000);
-
-	public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", false);
+	public string Summary => string.Join(", ", GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
+		.Select(p =>
+		{
+			var cad = p.CustomAttributes.FirstOrDefault(a => a.AttributeType == typeof(ConfigurationAttribute));
+			if (cad == null)
+				return null;
+			bool confidential = false;
+			if (cad.ConstructorArguments.Count > 0 && cad.ConstructorArguments[0].ArgumentType == typeof(bool))
+				confidential = cad.ConstructorArguments[0].Value is bool b && b;
+			var rawValue = p.GetValue(this);
+			string strVal = rawValue switch
+			{
+				null => "<null>",
+				bool bb => bb ? "true" : "false",
+				_ => rawValue.ToString() ?? ""
+			};
+			if (confidential)
+				strVal = "***";
+			return $"{p.Name}={strVal}";
+		})
+		.Where(s => s is not null)
+		.Cast<string>()
+		.ToArray());
 
 	public static Config Load()
 	{
