@@ -170,10 +170,10 @@ public sealed class Bot
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
-		var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
-		if (ragHintCount > 0)
-			messages.Add(new SystemChatMessage($"Harmony reference hints (selected): {ragHints}"));
-		messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
+                var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
+                if (ragHintCount > 0)
+                        messages.Add(new SystemChatMessage(ragHints));
+                messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
 
 		var promptText = FlattenMessages(messages);
 		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
