@@ -8,11 +8,12 @@ using System.Text;
 #pragma warning disable OPENAI001
 namespace HarmonyBot;
 
-public sealed class Bot
+public sealed class Bot : IDisposable
 {
 	private readonly Config _cfg;
 	private readonly DiscordSocketClient _client;
 	private readonly OpenAIResponseClient _chat;
+	private readonly HttpClient _httpClient;
 	private LlmPackIndex _llm = new([]);
 
 	private readonly ILoggerFactory _loggerFactory;
@@ -72,6 +73,9 @@ public sealed class Bot
 
 		// OpenAI client
 		_chat = new OpenAIResponseClient(_cfg.ChatModel, _cfg.OpenAIApiKey);
+
+		// HTTP client for downloading attachments
+		_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
 
 		// Optional Harmony reference pack
 		_ = Task.Run(async () =>
@@ -169,7 +173,7 @@ public sealed class Bot
 		var targetUser = anchor.Author as SocketGuildUser;
 		var targetName = targetUser?.DisplayName ?? anchor.Author.GlobalName ?? anchor.Author.Username;
 
-		var contextBlock = BuildContextBlock(context, anchor);
+		var contextBlock = await BuildContextBlockAsync(context, anchor, GetAttachmentTextAsync);
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
@@ -354,23 +358,69 @@ public sealed class Bot
 
 	// ---------- Prompt building helpers ----------
 
-	private static string BuildContextBlock(IReadOnlyList<IMessage> context, SocketMessage target)
+	private async Task<string> GetAttachmentTextAsync(IAttachment attachment)
 	{
-		static string One(IMessage m, ulong messageId)
+		// Only process text files
+		if (string.IsNullOrWhiteSpace(attachment.ContentType) ||
+			!attachment.ContentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
+			return "";
+
+		// Limit file size to avoid huge downloads
+		if (attachment.Size > 50_000) // 50KB limit
+			return $"[{attachment.Filename}: file too large ({attachment.Size} bytes)]";
+
+		try
+		{
+			var response = await _httpClient.GetAsync(attachment.Url);
+			if (!response.IsSuccessStatusCode)
+				return $"[{attachment.Filename}: download failed]";
+
+			var content = await response.Content.ReadAsStringAsync();
+			if (content.Length > 10_000) // 10KB text limit
+				content = content[..10_000] + " …";
+
+			return $"[Attachment: {attachment.Filename}]\n{content}\n[End of {attachment.Filename}]";
+		}
+		catch (Exception ex)
+		{
+			_log.LogWarning(ex, "Failed to download text attachment {Filename} from {Url}",
+				attachment.Filename, attachment.Url);
+			return $"[{attachment.Filename}: download error]";
+		}
+	}
+
+	private static async Task<string> BuildContextBlockAsync(IReadOnlyList<IMessage> context, SocketMessage target, Func<IAttachment, Task<string>> getAttachmentText)
+	{
+		static async Task<string> OneAsync(IMessage m, ulong messageId, Func<IAttachment, Task<string>> getAttachmentText)
 		{
 			var author = m.Author is SocketGuildUser gu ? (gu.DisplayName ?? gu.GlobalName ?? gu.Username) : (m.Author.GlobalName ?? m.Author.Username);
 			var when = m.Timestamp.UtcDateTime.ToString("u");
 			var content = string.IsNullOrWhiteSpace(m.Content) ? "<no text>" : m.Content;
 			if (content.Length > 1200)
 				content = content[..1200] + " …";
-			return $"- On {when}, {author} wrote message id {messageId}: {content}";
+
+			// Process text attachments
+			var attachmentTexts = new List<string>();
+			foreach (var attachment in m.Attachments)
+			{
+				var attachmentText = await getAttachmentText(attachment);
+				if (!string.IsNullOrWhiteSpace(attachmentText))
+					attachmentTexts.Add(attachmentText);
+			}
+
+			var fullContent = content;
+			if (attachmentTexts.Count > 0)
+				fullContent += "\n" + string.Join("\n", attachmentTexts);
+
+			return $"- On {when}, {author} wrote message id {messageId}: {fullContent}";
 		}
 
 		var sb = new StringBuilder();
 		foreach (var m in context.OrderBy(m => m.Timestamp))
 		{
 			var mark = m.Id == target.Id ? " <<TARGET>>" : "";
-			_ = sb.AppendLine(One(m, m.Id) + mark);
+			var messageText = await OneAsync(m, m.Id, getAttachmentText);
+			_ = sb.AppendLine(messageText + mark);
 		}
 		return sb.ToString();
 	}
@@ -445,5 +495,11 @@ public sealed class Bot
 
 	private static string Clamp(string s, int max = 2000)
 				=> s.Length <= max ? s : s[..(max - 2)] + " …";
+
+	public void Dispose()
+	{
+		_httpClient?.Dispose();
+		_client?.Dispose();
+	}
 }
 #pragma warning restore OPENAI001
