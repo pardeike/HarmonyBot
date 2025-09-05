@@ -1,11 +1,7 @@
 using Discord;
 using Discord.WebSocket;
-using HarmonyBot.RAG;
-using HarmonyBot.Util;
 using Microsoft.Extensions.Logging;
 using OpenAI.Responses;
-using System;
-using System.ClientModel;
 using System.Diagnostics;
 using System.Text;
 
@@ -101,7 +97,7 @@ public sealed class Bot
 		{
 			try
 			{
-				await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
+				_ = await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
 			}
 			catch (Exception ex)
 			{
@@ -140,13 +136,13 @@ public sealed class Bot
 		var anchor = cmd.Data.Message; // IMessage
 		if (anchor is null)
 		{
-			await cmd.ModifyOriginalResponseAsync(m => m.Content = "No message payload.");
+			_ = await cmd.ModifyOriginalResponseAsync(m => m.Content = "No message payload.");
 			_log.LogWarning("message-cmd.bad_request no-anchor");
 			return;
 		}
 		if (anchor.Channel is not SocketTextChannel chan)
 		{
-			await cmd.ModifyOriginalResponseAsync(m => m.Content = "Use inside a server text channel.");
+			_ = await cmd.ModifyOriginalResponseAsync(m => m.Content = "Use inside a server text channel.");
 			_log.LogWarning("message-cmd.bad_request not-text-channel");
 			return;
 		}
@@ -205,7 +201,7 @@ public sealed class Bot
 			 .WithButton("Cancel", $"cancel:{approvalId}", ButtonStyle.Danger)
 			 .Build();
 
-		await cmd.ModifyOriginalResponseAsync(m =>
+		_ = await cmd.ModifyOriginalResponseAsync(m =>
 		{
 			m.Content = Clamp(draft); // preview == potential reply; clamped to Discord limit
 			m.Components = components;
@@ -228,7 +224,7 @@ public sealed class Bot
 
 		Pending? p;
 		lock (_lock)
-			_pending.TryGetValue(id, out p);
+			_ = _pending.TryGetValue(id, out p);
 		if (p is null || component.User.Id != p.RequestedByUserId)
 			return;
 
@@ -253,7 +249,7 @@ public sealed class Bot
 				{ await p.Interaction.DeleteOriginalResponseAsync(); }
 				catch { /* ignore */ }
 				lock (_lock)
-					_pending.Remove(id);
+					_ = _pending.Remove(id);
 				_log.LogInformation("answer.cancelled");
 				Divider("answer end (cancelled)");
 				return;
@@ -275,7 +271,7 @@ public sealed class Bot
 				{ await p.Interaction.DeleteOriginalResponseAsync(); }
 				catch { /* ignore */ }
 				lock (_lock)
-					_pending.Remove(id);
+					_ = _pending.Remove(id);
 
 				_log.LogInformation("answer.approved posted_count={count} posted_ids={ids}",
 					 posted.Count, string.Join(",", posted));
@@ -302,7 +298,7 @@ public sealed class Bot
 
 		var lastAuthorTime = anchor.Timestamp;
 		ulong? cursor = anchor.Id;
-		int interposts = 0;
+		var interposts = 0;
 
 		while (list.Count < cfg.CtxMaxMessages)
 		{
@@ -370,7 +366,7 @@ public sealed class Bot
 		foreach (var m in context.OrderBy(m => m.Timestamp))
 		{
 			var mark = m.Id == target.Id ? " <<TARGET>>" : "";
-			sb.AppendLine(One(m, m.Id) + mark);
+			_ = sb.AppendLine(One(m, m.Id) + mark);
 		}
 		return sb.ToString();
 	}
@@ -388,15 +384,14 @@ public sealed class Bot
 		if (ragHits == 0)
 			return "";
 
-		var sb = new StringBuilder();
-		sb.AppendLine("Harmony reference hints (selected):");
+		var sb = new StringBuilder().AppendLine("Harmony reference hints (selected):");
 		foreach (var h in hits)
 		{
-			sb.AppendLine($"- {h.Signature ?? h.Id}");
+			_ = sb.AppendLine($"- {h.Signature ?? h.Id}");
 			if (!string.IsNullOrWhiteSpace(h.Summary))
-				sb.AppendLine($"  {h.Summary}");
+				_ = sb.AppendLine($"  {h.Summary}");
 			if (!string.IsNullOrWhiteSpace(h.DocUrl))
-				sb.AppendLine($"  [docs] {h.DocUrl}");
+				_ = sb.AppendLine($"  [docs] {h.DocUrl}");
 		}
 		return sb.ToString();
 	}

@@ -1,4 +1,4 @@
-namespace HarmonyBot.Util;
+namespace HarmonyBot;
 
 public static class Splitter
 {

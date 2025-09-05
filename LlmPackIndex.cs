@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace HarmonyBot.RAG;
+namespace HarmonyBot;
 
 public sealed class LlmPackIndex
 {
@@ -41,7 +41,6 @@ public sealed class LlmPackIndex
 		}
 
 		foreach (var dir in Candidates(hintDir))
-		{
 			try
 			{
 				var jsonl = Path.Combine(dir, "harmony.cards.jsonl");
@@ -59,7 +58,6 @@ public sealed class LlmPackIndex
 				return new LlmPackIndex(cards);
 			}
 			catch { /* ignore and continue */ }
-		}
 		return new LlmPackIndex([]);
 	}
 
