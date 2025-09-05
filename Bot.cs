@@ -218,7 +218,7 @@ public sealed class Bot
 
 	private async Task OnButtonAsync(SocketMessageComponent component)
 	{
-		await component.DeferAsync(); // ack the click; no extra messages
+		await component.DeferAsync(ephemeral: true); // ack the click; no extra messages
 
 		var parts = component.Data.CustomId.Split(':', 2);
 		if (parts.Length != 2)
