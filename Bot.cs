@@ -4,9 +4,11 @@ using HarmonyBot.RAG;
 using HarmonyBot.Util;
 using Microsoft.Extensions.Logging;
 using OpenAI.Chat;
+using System;
 using System.Diagnostics;
 using System.Text;
 
+#pragma warning disable OPENAI001
 namespace HarmonyBot;
 
 public sealed class Bot
@@ -173,15 +175,24 @@ public sealed class Bot
                 var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
                 if (ragHintCount > 0)
                         messages.Add(new SystemChatMessage(ragHints));
+                else
+                        messages.Add(new SystemChatMessage("You may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context."));
                 messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
 
 		var promptText = FlattenMessages(messages);
 		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
 			 _cfg.ChatModel, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
 
-		var swAi = Stopwatch.StartNew();
-		var completion = await _chat.CompleteChatAsync(messages);
-		swAi.Stop();
+                var opts = ragHintCount == 0
+                        ? new ChatCompletionOptions
+                        {
+                                WebSearchOptions = new()
+                        }
+                        : null;
+
+                var swAi = Stopwatch.StartNew();
+                var completion = await _chat.CompleteChatAsync(messages, opts);
+                swAi.Stop();
 
 		var draft = string.Concat(completion.Value.Content.Select(p => p.Text));
 		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars}\n{preview}",
@@ -451,6 +462,7 @@ public sealed class Bot
 		return sb.ToString();
 	}
 
-	private static string Clamp(string s, int max = 2000)
-		 => s.Length <= max ? s : s[..(max - 2)] + " …";
+        private static string Clamp(string s, int max = 2000)
+                 => s.Length <= max ? s : s[..(max - 2)] + " …";
 }
+#pragma warning restore OPENAI001
