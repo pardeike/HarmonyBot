@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "HarmonyBot": {
+      "commandName": "Project",
+      "workingDirectory": "C:\\Users\\Brrainz\\Source\\Repos\\HarmonyBot"
+    }
+  }
+}
