@@ -3,8 +3,9 @@ using Discord.WebSocket;
 using HarmonyBot.RAG;
 using HarmonyBot.Util;
 using Microsoft.Extensions.Logging;
-using OpenAI.Chat;
+using OpenAI.Responses;
 using System;
+using System.ClientModel;
 using System.Diagnostics;
 using System.Text;
 
@@ -15,7 +16,7 @@ public sealed class Bot
 {
 	private readonly Config _cfg;
 	private readonly DiscordSocketClient _client;
-	private readonly ChatClient _chat;
+	private readonly OpenAIResponseClient _chat;
 	private readonly LlmPackIndex _llm;
 
 	private readonly ILoggerFactory _loggerFactory;
@@ -74,7 +75,7 @@ public sealed class Bot
 		_client.ButtonExecuted += OnButtonAsync;
 
 		// OpenAI client
-		_chat = new ChatClient(_cfg.ChatModel, _cfg.OpenAIApiKey);
+		_chat = new OpenAIResponseClient(_cfg.ChatModel, _cfg.OpenAIApiKey);
 
 		// Optional Harmony reference pack
 		_llm = LlmPackIndex.TryLoad(_cfg.LlmPackDir);
@@ -172,31 +173,27 @@ public sealed class Bot
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
-		var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
-		if (ragHintCount > 0)
-			messages.Add(new SystemChatMessage(ragHints));
-		else
-			messages.Add(new SystemChatMessage("You may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context."));
-		messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
-
-		var promptText = FlattenMessages(messages);
+		var instructions = ragHintCount > 0
+			? $"{sys}\n{ragHints}"
+			: $"{sys}\nYou may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context.";
+		var userPrompt = $"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages.";
+		var promptText = instructions + "\n\n" + userPrompt;
 		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
-			 _cfg.ChatModel, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
+			_cfg.ChatModel, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
 
-		var opts = ragHintCount == 0
-				  ? new ChatCompletionOptions
-				  {
-					  WebSearchOptions = new()
-				  }
-				  : null;
+		var opts = new ResponseCreationOptions { Instructions = instructions };
+		if (ragHintCount == 0)
+			opts.Tools.Add(ResponseTool.CreateWebSearchTool());
 
 		var swAi = Stopwatch.StartNew();
-		var completion = await _chat.CompleteChatAsync(messages, opts);
+		var completion = await _chat.CreateResponseAsync(userPrompt, opts);
 		swAi.Stop();
 
-		var draft = string.Concat(completion.Value.Content.Select(p => p.Text));
+		var draft = string.Concat(completion.Value.OutputItems
+			.OfType<MessageResponseItem>()
+			.SelectMany(i => i.Content.Select(p => p.Text)));
 		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars}\n{preview}",
-			 swAi.ElapsedMilliseconds, draft.Length, ApplyAiLogPolicy(draft));
+			swAi.ElapsedMilliseconds, draft.Length, ApplyAiLogPolicy(draft));
 
 		var approvalId = Guid.NewGuid().ToString("N");
 		lock (_lock)
@@ -444,23 +441,6 @@ public sealed class Bot
 		_ => s.Length <= _logAiContentMax ? s : s[.._logAiContentMax] + " …"
 	};
 
-	private static string FlattenMessages(IEnumerable<ChatMessage> msgs)
-	{
-		var sb = new StringBuilder();
-		foreach (var m in msgs)
-		{
-			var tag = m switch
-			{
-				SystemChatMessage => "system",
-				UserChatMessage => "user",
-				AssistantChatMessage => "assistant",
-				_ => "message"
-			};
-			var text = string.Concat(m.Content.Select(p => p.Text));
-			sb.AppendLine($"\n[{tag}] {text}");
-		}
-		return sb.ToString();
-	}
 
 	private static string Clamp(string s, int max = 2000)
 				=> s.Length <= max ? s : s[..(max - 2)] + " …";
