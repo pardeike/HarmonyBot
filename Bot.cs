@@ -96,20 +96,20 @@ public sealed class Bot
 			 .WithName("Answer from here")
 			 .Build();
 
-                foreach (var g in _client.Guilds)
-                {
-                        try
-                        {
-                                await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
-                        }
-                        catch (Exception ex)
-                        {
-                                _log.LogError(ex, "Failed to create message command in {Guild}", g.Name);
-                        }
-                }
+		foreach (var g in _client.Guilds)
+		{
+			try
+			{
+				await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
+			}
+			catch (Exception ex)
+			{
+				_log.LogError(ex, "Failed to create message command in {Guild}", g.Name);
+			}
+		}
 
-                _log.LogInformation("Logged in as {User} — ready.", _client.CurrentUser);
-        }
+		_log.LogInformation("Logged in as {User} — ready.", _client.CurrentUser);
+	}
 
 	// ---------- Entry wrapper to avoid blocking the gateway ----------
 
@@ -172,27 +172,27 @@ public sealed class Bot
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
-                var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
-                if (ragHintCount > 0)
-                        messages.Add(new SystemChatMessage(ragHints));
-                else
-                        messages.Add(new SystemChatMessage("You may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context."));
-                messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
+		var messages = new List<ChatMessage> { new SystemChatMessage(sys) };
+		if (ragHintCount > 0)
+			messages.Add(new SystemChatMessage(ragHints));
+		else
+			messages.Add(new SystemChatMessage("You may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context."));
+		messages.Add(new UserChatMessage($"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages."));
 
 		var promptText = FlattenMessages(messages);
 		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
 			 _cfg.ChatModel, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
 
-                var opts = ragHintCount == 0
-                        ? new ChatCompletionOptions
-                        {
-                                WebSearchOptions = new()
-                        }
-                        : null;
+		var opts = ragHintCount == 0
+				  ? new ChatCompletionOptions
+				  {
+					  WebSearchOptions = new()
+				  }
+				  : null;
 
-                var swAi = Stopwatch.StartNew();
-                var completion = await _chat.CompleteChatAsync(messages, opts);
-                swAi.Stop();
+		var swAi = Stopwatch.StartNew();
+		var completion = await _chat.CompleteChatAsync(messages, opts);
+		swAi.Stop();
 
 		var draft = string.Concat(completion.Value.Content.Select(p => p.Text));
 		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars}\n{preview}",
@@ -430,12 +430,12 @@ public sealed class Bot
 		_ => LogLevel.Information
 	};
 
-        private void Divider(string title, params (string Key, object? Val)[] kv)
-        {
-                var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
-                var meta = kv is { Length: > 0 } ? " // " + string.Join(", ", kv.Select(p => $"{p.Key}={p.Val}")) : "";
-                _log.LogInformation("========== {Timestamp} :: {Title}{Meta} ==========", ts, title, meta);
-        }
+	private void Divider(string title, params (string Key, object? Val)[] kv)
+	{
+		var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
+		var meta = kv is { Length: > 0 } ? " // " + string.Join(", ", kv.Select(p => $"{p.Key}={p.Val}")) : "";
+		_log.LogInformation("========== {Timestamp} :: {Title}{Meta} ==========", ts, title, meta);
+	}
 
 	private string ApplyAiLogPolicy(string s) => _logAiContent switch
 	{
@@ -462,7 +462,7 @@ public sealed class Bot
 		return sb.ToString();
 	}
 
-        private static string Clamp(string s, int max = 2000)
-                 => s.Length <= max ? s : s[..(max - 2)] + " …";
+	private static string Clamp(string s, int max = 2000)
+				=> s.Length <= max ? s : s[..(max - 2)] + " …";
 }
 #pragma warning restore OPENAI001
