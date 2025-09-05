@@ -94,20 +94,20 @@ public sealed class Bot
 			 .WithName("Answer from here")
 			 .Build();
 
-		foreach (var g in _client.Guilds)
-		{
-			try
-			{
-				await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
-			}
-			catch (Exception ex)
-			{
-				Console.WriteLine($"Failed to create message command in {g.Name}: {ex.Message}");
-			}
-		}
+                foreach (var g in _client.Guilds)
+                {
+                        try
+                        {
+                                await _client.Rest.CreateGuildCommand(msgCmd, g.Id);
+                        }
+                        catch (Exception ex)
+                        {
+                                _log.LogError(ex, "Failed to create message command in {Guild}", g.Name);
+                        }
+                }
 
-		Console.WriteLine($"Logged in as {_client.CurrentUser} — ready.");
-	}
+                _log.LogInformation("Logged in as {User} — ready.", _client.CurrentUser);
+        }
 
 	// ---------- Entry wrapper to avoid blocking the gateway ----------
 
@@ -419,12 +419,12 @@ public sealed class Bot
 		_ => LogLevel.Information
 	};
 
-	private static void Divider(string title, params (string Key, object? Val)[] kv)
-	{
-		var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
-		var meta = kv is { Length: > 0 } ? " // " + string.Join(", ", kv.Select(p => $"{p.Key}={p.Val}")) : "";
-		Console.WriteLine($"========== {ts} :: {title}{meta} ==========");
-	}
+        private void Divider(string title, params (string Key, object? Val)[] kv)
+        {
+                var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
+                var meta = kv is { Length: > 0 } ? " // " + string.Join(", ", kv.Select(p => $"{p.Key}={p.Val}")) : "";
+                _log.LogInformation("========== {Timestamp} :: {Title}{Meta} ==========", ts, title, meta);
+        }
 
 	private string ApplyAiLogPolicy(string s) => _logAiContent switch
 	{
