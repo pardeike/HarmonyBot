@@ -16,7 +16,6 @@ public sealed class Config
 
 	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-4o");
 	[Configuration] public string LlmPackUri { get; init; } = GetEnvString("LLM_PACK_URI", "https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl");
-	[Configuration] public string LlmPackDir { get; init; } = GetEnvString("LLM_PACK_DIR", Directory.CreateTempSubdirectory().FullName);
 
 	[Configuration] public int MaxCardCount { get; init; } = GetEnvInt("MAX_CARD_COUNT", 10);
 
@@ -25,8 +24,8 @@ public sealed class Config
 	[Configuration] public int GroupMaxInterposts { get; init; } = GetEnvInt("GROUP_MAX_INTERPOSTS", 6);
 	[Configuration] public int CtxPrependBefore { get; init; } = GetEnvInt("CTX_PREPEND_BEFORE", 3);
 	[Configuration] public int CtxMaxMessages { get; init; } = GetEnvInt("CTX_MAX_MESSAGES", 60);
-	[Configuration] public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 12000);
-	[Configuration] public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", false);
+	[Configuration] public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 20000);
+	[Configuration] public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", true);
 
 	public string Summary => string.Join(", ", GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
 		.Select(p =>
@@ -35,7 +34,7 @@ public sealed class Config
 			if (cad == null)
 				return null;
 			var rawValue = p.GetValue(this);
-			string strVal = rawValue switch
+			var strVal = rawValue switch
 			{
 				null => "<null>",
 				bool bb => bb ? "true" : "false",

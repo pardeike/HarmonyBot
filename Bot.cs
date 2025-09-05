@@ -43,7 +43,7 @@ public sealed class Bot : IDisposable
 		_logAiContent = (Environment.GetEnvironmentVariable("LOG_AI_CONTENT") ?? "truncated").ToLowerInvariant();
 		_logAiContentMax = int.TryParse(Environment.GetEnvironmentVariable("LOG_AI_CONTENT_MAX"), out var n) ? n : 4000;
 
-		_log.LogInformation("Configuration:\n{configuration}", _cfg.Summary);
+		_log.LogInformation("Configuration: {configuration}", _cfg.Summary);
 
 		_client = new DiscordSocketClient(new DiscordSocketConfig
 		{
@@ -78,11 +78,7 @@ public sealed class Bot : IDisposable
 		_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
 
 		// Optional Harmony reference pack
-		_ = Task.Run(async () =>
-		{
-			if (await LlmPackIndex.DownloadCards(_cfg, _log))
-				_llm = LlmPackIndex.LoadAsync(_cfg, _log);
-		});
+		_llm = LlmPackIndex.LoadAsync(_cfg, _log).Result;
 	}
 
 	public async Task RunAsync()
@@ -113,7 +109,7 @@ public sealed class Bot : IDisposable
 			}
 		}
 
-		_log.LogInformation("Logged in as {User} — ready.", _client.CurrentUser);
+		_log.LogInformation("Ready");
 	}
 
 	// ---------- Entry wrapper to avoid blocking the gateway ----------
@@ -173,7 +169,7 @@ public sealed class Bot : IDisposable
 		var targetUser = anchor.Author as SocketGuildUser;
 		var targetName = targetUser?.DisplayName ?? anchor.Author.GlobalName ?? anchor.Author.Username;
 
-		var contextBlock = await BuildContextBlockAsync(context, anchor, GetAttachmentTextAsync);
+		var contextBlock = await BuildContextBlockAsync(_log, context, anchor, GetAttachmentTextAsync);
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
@@ -281,8 +277,7 @@ public sealed class Bot : IDisposable
 				lock (_lock)
 					_ = _pending.Remove(id);
 
-				_log.LogInformation("answer.approved posted_count={count} posted_ids={ids}",
-					 posted.Count, string.Join(",", posted));
+				_log.LogInformation("answer.approved posted_count={count} posted_ids={ids}", posted.Count, string.Join(",", posted));
 				Divider("answer end (approved)");
 			}
 		}
@@ -360,6 +355,8 @@ public sealed class Bot : IDisposable
 
 	private async Task<string> GetAttachmentTextAsync(IAttachment attachment)
 	{
+		_log.LogInformation("attachment {name} of type [{type}] and size {size}", attachment.Filename, attachment.ContentType, attachment.Size);
+
 		// Only process text files
 		if (string.IsNullOrWhiteSpace(attachment.ContentType) ||
 			!attachment.ContentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase))
@@ -389,15 +386,15 @@ public sealed class Bot : IDisposable
 		}
 	}
 
-	private static async Task<string> BuildContextBlockAsync(IReadOnlyList<IMessage> context, SocketMessage target, Func<IAttachment, Task<string>> getAttachmentText)
+	private static async Task<string> BuildContextBlockAsync(ILogger log, IReadOnlyList<IMessage> context, SocketMessage target, Func<IAttachment, Task<string>> getAttachmentText)
 	{
-		static async Task<string> OneAsync(IMessage m, ulong messageId, Func<IAttachment, Task<string>> getAttachmentText)
+		static async Task<string> OneAsync(ILogger log, IMessage m, ulong messageId, Func<IAttachment, Task<string>> getAttachmentText)
 		{
 			var author = m.Author is SocketGuildUser gu ? (gu.DisplayName ?? gu.GlobalName ?? gu.Username) : (m.Author.GlobalName ?? m.Author.Username);
 			var when = m.Timestamp.UtcDateTime.ToString("u");
 			var content = string.IsNullOrWhiteSpace(m.Content) ? "<no text>" : m.Content;
-			if (content.Length > 1200)
-				content = content[..1200] + " …";
+			if (content.Length > 12000)
+				content = content[..12000] + " …";
 
 			// Process text attachments
 			var attachmentTexts = new List<string>();
@@ -419,7 +416,7 @@ public sealed class Bot : IDisposable
 		foreach (var m in context.OrderBy(m => m.Timestamp))
 		{
 			var mark = m.Id == target.Id ? " <<TARGET>>" : "";
-			var messageText = await OneAsync(m, m.Id, getAttachmentText);
+			var messageText = await OneAsync(log, m, m.Id, getAttachmentText);
 			_ = sb.AppendLine(messageText + mark);
 		}
 		return sb.ToString();
