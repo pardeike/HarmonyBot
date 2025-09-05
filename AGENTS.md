@@ -6,6 +6,6 @@
 
 * Respect .editorconfig when doing edits, especially for using whitespace
 
-* Whitespace rules are TAB, CRLF endings. Longer than usual lines (~ 140 chars are ok)
+* Use the latest language features. Use `var` and the shorter array syntax. Longer than usual lines (~ 140 chars are ok)
 
-* User dotnet format to format the code - it will respect the .editorconfig file.
+* Don't bother with whitespace formatting during work. Instead, just before you are done, use `dotnet format` to format the code - it will respect the .editorconfig file.
