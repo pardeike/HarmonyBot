@@ -27,9 +27,9 @@ public sealed class LlmPackIndex
 
 	private LlmPackIndex(List<Card> cards) => _cards = cards;
 
-	public static LlmPackIndex TryLoad(string? hintDir = null)
+	public static LlmPackIndex TryLoad(string hintDir)
 	{
-		static IEnumerable<string> Candidates(string? hint)
+		static IEnumerable<string> Candidates(string hint)
 		{
 			if (!string.IsNullOrWhiteSpace(hint))
 				yield return hint;
