@@ -348,14 +348,14 @@ public sealed class Bot
 
 	private static string BuildContextBlock(IReadOnlyList<IMessage> context, SocketMessage target)
 	{
-		static string One(IMessage m, ulong targetId)
+		static string One(IMessage m, ulong messageId)
 		{
 			var author = m.Author is SocketGuildUser gu ? (gu.DisplayName ?? gu.GlobalName ?? gu.Username) : (m.Author.GlobalName ?? m.Author.Username);
 			var when = m.Timestamp.UtcDateTime.ToString("u");
 			var content = string.IsNullOrWhiteSpace(m.Content) ? "<no text>" : m.Content;
 			if (content.Length > 1200)
 				content = content[..1200] + " …";
-			return $"\n- On {when}, {author} wrote message id {targetId}: {content}";
+			return $"- On {when}, {author} wrote message id {messageId}: {content}";
 		}
 
 		var sb = new StringBuilder();
