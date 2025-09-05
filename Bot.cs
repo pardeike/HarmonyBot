@@ -2,8 +2,9 @@ using Discord.WebSocket;
 using OpenAI.Chat;
 using System.Text;
 using HarmonyBot.RAG;
-using HarmonyBot.Util;
 using Discord;
+using System.Diagnostics;
+using Microsoft.Extensions.Logging;
 
 namespace HarmonyBot;
 
@@ -17,6 +18,12 @@ public sealed class Bot
 	// approvalId -> pending payload
 	private readonly Dictionary<string, Pending> _pending = [];
 	private readonly object _lock = new();
+
+	private readonly ILoggerFactory _loggerFactory;
+	private readonly ILogger _log;
+
+	private readonly string _logAiContent;
+	private readonly int _logAiContentMax;
 
 	private sealed record Pending(
 	 SocketSlashCommand Slash,  // keep the original interaction handle
@@ -39,7 +46,19 @@ public sealed class Bot
 			LogGatewayIntentWarnings = false
 		});
 
-		_client.Log += msg => { Console.WriteLine($"[{msg.Severity}] {msg.Source}: {msg.Message}"); return Task.CompletedTask; };
+		_loggerFactory = LogSetup.CreateLoggerFactory();
+		_log = _loggerFactory.CreateLogger<Bot>();
+
+		_logAiContent = (Environment.GetEnvironmentVariable("LOG_AI_CONTENT") ?? "truncated").ToLowerInvariant();
+		_logAiContentMax = int.TryParse(Environment.GetEnvironmentVariable("LOG_AI_CONTENT_MAX"), out var n) ? n : 4000;
+
+		_client.Log += msg =>
+		{
+			_log.Log(MapLevel(msg.Severity), "[{Source}] {Message}", msg.Source, msg.Message);
+			if (msg.Exception is not null)
+				_log.LogError(msg.Exception, "Discord exception ({Source})", msg.Source);
+			return Task.CompletedTask;
+		};
 
 		_client.Ready += OnReadyAsync;
 		_client.SlashCommandExecuted += OnSlashCommandEntrypointAsync;
@@ -52,6 +71,49 @@ public sealed class Bot
 		_llm = LlmPackIndex.TryLoad(_cfg.LlmPackDir);
 	}
 
+	private static LogLevel MapLevel(LogSeverity s) => s switch
+	{
+		LogSeverity.Critical => LogLevel.Critical,
+		LogSeverity.Error => LogLevel.Error,
+		LogSeverity.Warning => LogLevel.Warning,
+		LogSeverity.Info => LogLevel.Information,
+		LogSeverity.Verbose => LogLevel.Debug,
+		LogSeverity.Debug => LogLevel.Trace,
+		_ => LogLevel.Information
+	};
+
+	private static void Divider(string title, params (string Key, object? Val)[] kv)
+	{
+		var ts = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff 'UTC'");
+		var meta = kv is { Length: > 0 } ? " // " + string.Join(", ", kv.Select(p => $"{p.Key}={p.Val}")) : "";
+		Console.WriteLine($"========== {ts} :: {title}{meta} ==========");
+	}
+
+	private string ApplyAiLogPolicy(string s) => _logAiContent switch
+	{
+		"none" => "[suppressed]",
+		"full" => s,
+		_ => s.Length <= _logAiContentMax ? s : s[.._logAiContentMax] + " …"
+	};
+
+	private static string FlattenMessages(IEnumerable<OpenAI.Chat.ChatMessage> msgs)
+	{
+		var sb = new StringBuilder();
+		foreach (var m in msgs)
+		{
+			var tag = m switch
+			{
+				SystemChatMessage => "system",
+				UserChatMessage => "user",
+				AssistantChatMessage => "assistant",
+				_ => "message"
+			};
+			var text = string.Concat(m.Content.Select(p => p.Text));
+			sb.AppendLine($"[{tag}] {text}");
+		}
+		return sb.ToString();
+	}
+
 	private Task OnSlashCommandEntrypointAsync(SocketSlashCommand cmd)
 	{
 		_ = Task.Run(async () =>
@@ -60,11 +122,10 @@ public sealed class Bot
 			{ await OnSlashCommandAsync(cmd); }
 			catch (Exception ex)
 			{
-				Console.WriteLine($"Failed to run command {cmd.CommandName}: {ex}");
-				// try to inform the invoker if we can
+				_log.LogError(ex, "Unhandled exception in slash handler {Command}", cmd.CommandName);
 				try
 				{ await SafeErrorAsync(cmd, "Unexpected error. Check logs."); }
-				catch { /* ignore */ }
+				catch { }
 			}
 		});
 		return Task.CompletedTask;
@@ -120,34 +181,52 @@ public sealed class Bot
 
 	private async Task OnSlashCommandAsync(SocketSlashCommand cmd)
 	{
-		await cmd.DeferAsync(ephemeral: true); // single ephemeral message “slot”. :contentReference[oaicite:5]{index=5}
+		await cmd.DeferAsync(ephemeral: true);
+
+		var who = cmd.Data.Options.First().Value?.ToString()?.Trim() ?? "";
+		var guildId = (cmd.GuildId ?? 0UL);
+		var channelId = cmd.ChannelId ?? 0;
+
+		using var scope = _log.BeginScope(new Dictionary<string, object>
+		{
+			["interaction"] = cmd.Id.ToString(),
+			["guild"] = guildId,
+			["channel"] = channelId,
+			["invoker"] = cmd.User.Id,
+			["who"] = who
+		});
+
+		Divider("/answer start", ("who", who), ("invoker", cmd.User.Username), ("guild", guildId), ("channel", channelId)); // LOG
+		_log.LogInformation("answer.start who={who}", who); // LOG
 
 		if (!IsOwner(cmd))
-		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Owner‑only."); return; }
-
-		var who = cmd.Data.Options.First().Value?.ToString()?.Trim();
+		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Owner‑only."); _log.LogWarning("answer.denied owner-only"); return; }
 		if (string.IsNullOrEmpty(who))
-		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Provide a name fragment."); return; }
-
+		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Provide a name fragment."); _log.LogWarning("answer.bad_request empty-who"); return; }
 		if (cmd.Channel is not SocketTextChannel chan)
-		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Run /answer in a server text channel."); return; }
+		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = "Run /answer in a server text channel."); _log.LogWarning("answer.bad_request not-text-channel"); return; }
+
+		var swTotal = Stopwatch.StartNew();
 
 		var (target, context) = await FindTargetAndContextAsync(chan, who, _cfg.ContextBefore, _cfg.ContextAfter);
 		if (target is null)
-		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = $"No recent message found for “{who}”."); return; }
+		{ await cmd.ModifyOriginalResponseAsync(m => m.Content = $"No recent message found for “{who}”."); _log.LogInformation("answer.no_target"); return; }
 
 		var targetUser = (target.Author as SocketGuildUser);
 		var targetName = targetUser?.DisplayName ?? target.Author.GlobalName ?? target.Author.Username;
 
+		_log.LogInformation("answer.target found target_message={msgId} target_user={user} context_count={count}",
+			 target.Id, targetName, context.Count); // LOG
+
 		var contextBlock = BuildContextBlock(context, target);
-		var ragHints = BuildRagBlock(contextBlock);
+		var ragHints = BuildRagBlock(contextBlock, out var ragHits);
 		var sys = await File.ReadAllTextAsync("Prompts/SystemPrompt.txt");
 
 		var messages = new List<OpenAI.Chat.ChatMessage>
 	 {
 		  new SystemChatMessage(sys),
-		  new SystemChatMessage(ragHints), // may be empty
-        new UserChatMessage($$"""
+		  new SystemChatMessage(ragHints),
+		  new UserChatMessage($$"""
             Channel excerpts (oldest → newest):
             {{contextBlock}}
 
@@ -156,14 +235,22 @@ public sealed class Bot
             """)
 	 };
 
-		// NOTE: OpenAI .NET returns ClientResult<ChatCompletion> here
-		var completion = await _chat.CompleteChatAsync(messages); // official API. :contentReference[oaicite:6]{index=6}
-		var draft = string.Concat(completion.Value.Content.Select(p => p.Text));
+		var promptText = FlattenMessages(messages);
+		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
+			 _cfg.ChatModel, promptText.Length, ragHits, ApplyAiLogPolicy(promptText)); // LOG
 
-		// single ephemeral preview + buttons (no extra follow‑ups)
+		var swAi = Stopwatch.StartNew();
+		var completion = await _chat.CompleteChatAsync(messages); // NOTE: result is ClientResult<ChatCompletion>
+		swAi.Stop();
+
+		var draft = string.Concat(completion.Value.Content.Select(p => p.Text)); // NOTE: completion.Value.Content
+		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars}\n{preview}",
+			 swAi.ElapsedMilliseconds, draft.Length, ApplyAiLogPolicy(draft)); // LOG
+
 		var approvalId = Guid.NewGuid().ToString("N");
 		lock (_lock)
 			_pending[approvalId] = new Pending(cmd, chan.Id, target.Id, draft, cmd.User.Id);
+		_log.LogInformation("answer.draft.created approval_id={approvalId}", approvalId); // LOG
 
 		var components = new ComponentBuilder()
 			 .WithButton("Approve", $"approve:{approvalId}", ButtonStyle.Success)
@@ -172,22 +259,22 @@ public sealed class Bot
 
 		await cmd.ModifyOriginalResponseAsync(m =>
 		{
-			m.Content = Clamp(draft);               // preview == potential reply
-			m.Components = components;              // approval row
+			m.Content = draft.Length <= 2000 ? draft : draft[..1990] + " …"; // show full potential reply (clamped for Discord)
+			m.Components = components;
 		});
 
-		// No FollowupAsync calls here → exactly one ephemeral message on screen.
+		swTotal.Stop();
+		_log.LogInformation("answer.ready elapsed_ms={ms}", swTotal.ElapsedMilliseconds); // LOG
+		Divider("/answer ready", ("approval_id", approvalId)); // LOG
 	}
 
 	private async Task OnButtonAsync(SocketMessageComponent component)
 	{
-		// Acknowledge immediately; don't send any new messages. :contentReference[oaicite:7]{index=7}
-		await component.DeferAsync(); // plain ack is enough (no new ephemeral)
+		await component.DeferAsync(); // ack button; no extra messages
 
 		var parts = component.Data.CustomId.Split(':', 2);
 		if (parts.Length != 2)
 			return;
-
 		var action = parts[0];
 		var id = parts[1];
 
@@ -195,48 +282,59 @@ public sealed class Bot
 		lock (_lock)
 			_pending.TryGetValue(id, out p);
 		if (p is null || component.User.Id != p.RequestedByUserId)
-		{
-			// Silent: no more ephemerals. Just drop.
 			return;
-		}
+
+		using var scope = _log.BeginScope(new Dictionary<string, object>
+		{
+			["interaction"] = p.Slash.Id.ToString(),
+			["guild"] = p.Slash.GuildId ?? 0UL,
+			["channel"] = p.Slash.ChannelId ?? 0,
+			["invoker"] = p.RequestedByUserId,
+			["approval_id"] = id,
+			["target_msg"] = p.TargetMessageId
+		});
+
+		Divider($"button {action}", ("approval_id", id)); // LOG
+		_log.LogInformation("answer.button action={action}", action); // LOG
 
 		try
 		{
 			if (action == "cancel")
 			{
-				// Remove preview and exit
-				await p.Slash.DeleteOriginalResponseAsync(); // delete the original ephemeral preview. :contentReference[oaicite:8]{index=8}
+				await p.Slash.DeleteOriginalResponseAsync();
 				lock (_lock)
 					_pending.Remove(id);
-				Console.WriteLine($"[BOT] Cancelled draft for message {p.TargetMessageId} by {component.User.Username}.");
+				_log.LogInformation("answer.cancelled"); // LOG
+				Divider("answer end (cancelled)");
 				return;
 			}
 
 			if (action == "approve")
 			{
-				// Post reply (chunked) to original message
+				var posted = new List<ulong>();
 				if (_client.GetChannel(p.ChannelId) is IMessageChannel chan)
 				{
 					foreach (var chunk in Util.Splitter.ChunkForDiscord(p.Draft))
-						await chan.SendMessageAsync(chunk, messageReference: new MessageReference(p.TargetMessageId));
+					{
+						var msg = await chan.SendMessageAsync(chunk, messageReference: new MessageReference(p.TargetMessageId));
+						posted.Add(msg.Id);
+					}
 				}
 
-				// Remove the preview
-				await p.Slash.DeleteOriginalResponseAsync(); // nukes the single ephemeral preview
+				await p.Slash.DeleteOriginalResponseAsync();
 				lock (_lock)
 					_pending.Remove(id);
 
-				Console.WriteLine($"[BOT] Approved and posted reply to message {p.TargetMessageId}.");
-				return;
+				_log.LogInformation("answer.approved posted_count={count} posted_ids={ids}",
+					 posted.Count, string.Join(",", posted)); // LOG
+				Divider("answer end (approved)");
 			}
 		}
 		catch (Exception ex)
 		{
-			// Log only; no user-notifying ephemerals
-			Console.WriteLine($"[BOT] Button handling error: {ex}");
+			_log.LogError(ex, "answer.button error action={action}", action); // LOG
 		}
 	}
-
 
 	// Build a compact, model-friendly excerpt list
 	private static string BuildContextBlock(IReadOnlyList<IMessage> context, IMessage target)
@@ -264,16 +362,17 @@ public sealed class Bot
 		return sb.ToString();
 	}
 
-	private string BuildRagBlock(string contextBlock)
+	private string BuildRagBlock(string contextBlock, out int ragHits)
 	{
+		ragHits = 0;
 		if (!_llm.IsLoaded)
-			return ""; // no-op if pack not present
-						  // Use the latest user utterance (the TARGET) for search; else fallback to all text
+			return "";
 		var last = contextBlock.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-								.LastOrDefault(l => l.Contains("<<TARGET>>")) ?? contextBlock;
+									  .LastOrDefault(l => l.Contains("<<TARGET>>")) ?? contextBlock;
 		var query = last.Replace("<<TARGET>>", "");
 		var hits = _llm.Search(query, k: 4);
-		if (hits.Count == 0)
+		ragHits = hits.Count;
+		if (ragHits == 0)
 			return "";
 
 		var sb = new StringBuilder();
