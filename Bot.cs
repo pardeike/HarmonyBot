@@ -330,7 +330,8 @@ public sealed class Bot : IDisposable
 				else
 				{
 					if (!cfg.IncludeInterposts)
-					{ cursor = null; break; }
+						continue; // skip other authors when interposts are excluded
+
 					interposts++;
 					if (interposts > cfg.GroupMaxInterposts)
 					{ cursor = null; break; }
@@ -338,7 +339,7 @@ public sealed class Bot : IDisposable
 				}
 
 				// character budget to avoid over-long prompts
-				var chars = list.Sum(x => (x.Content?.Length ?? 0));
+				var chars = list.Sum(x => x.Content?.Length ?? 0);
 				if (chars >= cfg.CtxMaxChars)
 				{ cursor = null; break; }
 			}
