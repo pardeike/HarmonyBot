@@ -342,7 +342,8 @@ public sealed class Bot : IDisposable
 				else
 				{
 					if (!cfg.IncludeInterposts)
-					{ cursor = null; break; }
+						continue; // skip other authors when interposts are excluded
+
 					interposts++;
 					if (interposts > cfg.GroupMaxInterposts)
 					{ cursor = null; break; }
