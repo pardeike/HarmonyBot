@@ -381,7 +381,7 @@ public sealed class Bot : IDisposable
 
 		try
 		{
-			var response = await _httpClient.GetAsync(attachment.Url);
+			using var response = await _httpClient.GetAsync(attachment.Url, HttpCompletionOption.ResponseHeadersRead);
 			if (!response.IsSuccessStatusCode)
 				return $"[{attachment.Filename}: download failed]";
 
