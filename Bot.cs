@@ -40,8 +40,9 @@ public sealed class Bot : IDisposable
 		_loggerFactory = LogSetup.CreateLoggerFactory();
 		_log = _loggerFactory.CreateLogger<Bot>();
 
-		_logAiContent = (Environment.GetEnvironmentVariable("LOG_AI_CONTENT") ?? "truncated").ToLowerInvariant();
-		_logAiContentMax = int.TryParse(Environment.GetEnvironmentVariable("LOG_AI_CONTENT_MAX"), out var n) ? n : 4000;
+
+		_logAiContent = cfg.LogAiContent;
+		_logAiContentMax = cfg.LogAiContentMax;
 
 		_log.LogInformation("Configuration: {configuration}", _cfg.Summary);
 
