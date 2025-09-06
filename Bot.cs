@@ -508,6 +508,8 @@ public sealed class Bot : IDisposable
 
 	public void Dispose()
 	{
+		(_chat as IDisposable)?.Dispose();
+		_loggerFactory?.Dispose();
 		_httpClient?.Dispose();
 		_client?.Dispose();
 	}
