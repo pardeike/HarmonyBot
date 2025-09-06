@@ -14,7 +14,7 @@ public sealed class Bot : IDisposable
 	private readonly DiscordSocketClient _client;
 	private readonly OpenAIResponseClient _chat;
 	private readonly HttpClient _httpClient;
-	private LlmPackIndex _llm = new([]);
+	private readonly LlmPackIndex _llm = new([]);
 
 	private readonly ILoggerFactory _loggerFactory;
 	private readonly ILogger _log;
@@ -376,8 +376,8 @@ public sealed class Bot : IDisposable
 			return "";
 
 		// Limit file size to avoid huge downloads
-		if (attachment.Size > 50_000) // 50KB limit
-			return $"[{attachment.Filename}: file too large ({attachment.Size} bytes)]";
+		if (attachment.Size > _cfg.MaxFileSize)
+			return $"[{attachment.Filename}: file too large ({attachment.Size} > {_cfg.MaxFileSize} bytes)]";
 
 		try
 		{
@@ -386,8 +386,8 @@ public sealed class Bot : IDisposable
 				return $"[{attachment.Filename}: download failed]";
 
 			var content = await response.Content.ReadAsStringAsync();
-			if (content.Length > 10_000) // 10KB text limit
-				content = content[..10_000] + " …";
+			if (content.Length > _cfg.MaxFileSize)
+				content = content[.._cfg.MaxFileSize] + " …";
 
 			return $"[Attachment: {attachment.Filename}]\n{content}\n[End of {attachment.Filename}]";
 		}

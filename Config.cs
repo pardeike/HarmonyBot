@@ -18,6 +18,7 @@ public sealed class Config
 	[Configuration] public string LlmPackUri { get; init; } = GetEnvString("LLM_PACK_URI", "https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl");
 
 	[Configuration] public int MaxCardCount { get; init; } = GetEnvInt("MAX_CARD_COUNT", 10);
+	[Configuration] public int MaxFileSize { get; init; } = GetEnvInt("MAX_FILE_SIZE", 4 * 1024 * 1024);
 
 	[Configuration] public int GroupMaxGapSec { get; init; } = GetEnvInt("GROUP_MAX_GAP_SEC", 300); // 5 min
 	[Configuration] public int GroupMaxDurationSec { get; init; } = GetEnvInt("GROUP_MAX_DURATION_SEC", 1800); // 30 min

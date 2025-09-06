@@ -12,11 +12,11 @@ public static class LogSetup
 
 		return LoggerFactory.Create(builder =>
 		{
-			builder.SetMinimumLevel(level);
+			_ = builder.SetMinimumLevel(level);
 
 			if (format == "text")
 			{
-				builder.AddSimpleConsole(o =>
+				_ = builder.AddSimpleConsole(o =>
 				{
 					o.TimestampFormat = "[yyyy-MM-dd HH:mm:ss.fff] ";
 					o.SingleLine = true;
@@ -24,7 +24,7 @@ public static class LogSetup
 			}
 			else
 			{
-				builder.AddJsonConsole(o =>
+				_ = builder.AddJsonConsole(o =>
 				{
 					o.IncludeScopes = true;
 					o.TimestampFormat = "yyyy-MM-dd HH:mm:ss.fff 'UTC'";
