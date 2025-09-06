@@ -26,6 +26,8 @@ public sealed class Config
 	[Configuration] public int CtxMaxMessages { get; init; } = GetEnvInt("CTX_MAX_MESSAGES", 60);
 	[Configuration] public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 20000);
 	[Configuration] public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", true);
+	[Configuration] public string LogAiContent { get; init; } = GetEnvString("LOG_AI_CONTENT", "full").ToLowerInvariant();
+	[Configuration] public int LogAiContentMax { get; init; } = GetEnvInt("LOG_AI_CONTENT_MAX", 4000);
 
 	public string Summary => string.Join(", ", GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance)
 		.Select(p =>

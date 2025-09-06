@@ -40,8 +40,9 @@ public sealed class Bot : IDisposable
 		_loggerFactory = LogSetup.CreateLoggerFactory();
 		_log = _loggerFactory.CreateLogger<Bot>();
 
-		_logAiContent = (Environment.GetEnvironmentVariable("LOG_AI_CONTENT") ?? "truncated").ToLowerInvariant();
-		_logAiContentMax = int.TryParse(Environment.GetEnvironmentVariable("LOG_AI_CONTENT_MAX"), out var n) ? n : 4000;
+
+		_logAiContent = cfg.LogAiContent;
+		_logAiContentMax = cfg.LogAiContentMax;
 
 		_log.LogInformation("Configuration: {configuration}", _cfg.Summary);
 
@@ -298,6 +299,11 @@ public sealed class Bot : IDisposable
 		var before = await channel.GetMessagesAsync(anchor.Id, Direction.Before, cfg.CtxPrependBefore).FlattenAsync();
 		list.AddRange(before.Reverse());
 		list.Add(anchor);
+		static int MessageLength(IMessage msg) =>
+				  (msg.Content?.Length ?? 0) + msg.Attachments.Sum(a => a.Description?.Length ?? 0);
+		var totalChars = list.Sum(MessageLength);
+		if (totalChars >= cfg.CtxMaxChars)
+			return list;
 
 		var lastAuthorTime = anchor.Timestamp;
 		ulong? cursor = anchor.Id;
@@ -305,12 +311,17 @@ public sealed class Bot : IDisposable
 
 		while (list.Count < cfg.CtxMaxMessages)
 		{
-			var page = await channel.GetMessagesAsync(cursor!.Value, Direction.After, 100).FlattenAsync();
-			if (!page.Any())
+			var page = (await channel.GetMessagesAsync(cursor!.Value, Direction.After, 100).FlattenAsync())
+					  .OrderBy(m => m.Timestamp)
+					  .ThenBy(m => m.Id)
+					  .ToList();
+			if (page.Count == 0)
 				break;
 
+			IMessage? last = null;
 			foreach (var m in page)
 			{
+				last = m;
 				// hard cap on total span from the anchor
 				if ((m.Timestamp - anchor.Timestamp).TotalSeconds > cfg.GroupMaxDurationSec)
 				{
@@ -326,6 +337,7 @@ public sealed class Bot : IDisposable
 					list.Add(m);
 					lastAuthorTime = m.Timestamp;
 					interposts = 0;
+					totalChars += MessageLength(m);
 				}
 				else
 				{
@@ -336,17 +348,17 @@ public sealed class Bot : IDisposable
 					if (interposts > cfg.GroupMaxInterposts)
 					{ cursor = null; break; }
 					list.Add(m); // keep limited interposts for context
+					totalChars += MessageLength(m);
 				}
 
 				// character budget to avoid over-long prompts
-				var chars = list.Sum(x => x.Content?.Length ?? 0);
-				if (chars >= cfg.CtxMaxChars)
+				if (totalChars >= cfg.CtxMaxChars)
 				{ cursor = null; break; }
 			}
 
 			if (cursor is null)
 				break;
-			cursor = page.Last().Id;
+			cursor = last!.Id;
 		}
 
 		return list;
