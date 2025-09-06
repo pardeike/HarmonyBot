@@ -310,12 +310,17 @@ public sealed class Bot : IDisposable
 
 		while (list.Count < cfg.CtxMaxMessages)
 		{
-			var page = await channel.GetMessagesAsync(cursor!.Value, Direction.After, 100).FlattenAsync();
-			if (!page.Any())
+			var page = (await channel.GetMessagesAsync(cursor!.Value, Direction.After, 100).FlattenAsync())
+					  .OrderBy(m => m.Timestamp)
+					  .ThenBy(m => m.Id)
+					  .ToList();
+			if (page.Count == 0)
 				break;
 
+			IMessage? last = null;
 			foreach (var m in page)
 			{
+				last = m;
 				// hard cap on total span from the anchor
 				if ((m.Timestamp - anchor.Timestamp).TotalSeconds > cfg.GroupMaxDurationSec)
 				{
@@ -351,7 +356,7 @@ public sealed class Bot : IDisposable
 
 			if (cursor is null)
 				break;
-			cursor = page.Last().Id;
+			cursor = last!.Id;
 		}
 
 		return list;
