@@ -208,7 +208,7 @@ public sealed class Bot : IDisposable
 
 		_ = await cmd.ModifyOriginalResponseAsync(m =>
 		{
-			m.Content = Clamp(draft); // preview == potential reply; clamped to Discord limit
+			m.Content = DiscordMessageSizeClamp(draft); // preview == potential reply
 			m.Components = components;
 		});
 
@@ -406,8 +406,6 @@ public sealed class Bot : IDisposable
 			var author = m.Author is SocketGuildUser gu ? (gu.DisplayName ?? gu.GlobalName ?? gu.Username) : (m.Author.GlobalName ?? m.Author.Username);
 			var when = m.Timestamp.UtcDateTime.ToString("u");
 			var content = string.IsNullOrWhiteSpace(m.Content) ? "<no text>" : m.Content;
-			if (content.Length > 12000)
-				content = content[..12000] + " …";
 
 			// Process text attachments
 			var attachmentTexts = new List<string>();
@@ -503,7 +501,7 @@ public sealed class Bot : IDisposable
 	};
 
 
-	private static string Clamp(string s, int max = 2000)
+	private static string DiscordMessageSizeClamp(string s, int max = 2000)
 				=> s.Length <= max ? s : s[..(max - 2)] + " …";
 
 	public void Dispose()
