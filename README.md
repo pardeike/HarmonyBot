@@ -12,7 +12,7 @@ The Discord bot for the official discord support server for the official Lib.Har
 4. Create a file ~/.api-keys with the json format:
 	```json
 	{
-	  "DISCORD_TOKEN": "YOUR_DISCORD_BOT_TOKEN",
+	  "HARMONYBOT_TOKEN": "YOUR_DISCORD_BOT_TOKEN",
 	  "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY"
 	}
 	```

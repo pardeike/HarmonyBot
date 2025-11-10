@@ -60,15 +60,15 @@ public sealed class Config
 			path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), path[2..]);
 
 		if (!File.Exists(path))
-			throw new FileNotFoundException($"Cannot find API keys file at {path}. Expected JSON: {{\"DISCORD_TOKEN\":\"...\",\"OPENAI_API_KEY\":\"...\"}}");
+			throw new FileNotFoundException($"Cannot find API keys file at {path}. Expected JSON: {{\"HARMONYBOT_TOKEN\":\"...\",\"OPENAI_API_KEY\":\"...\"}}");
 
 		using var json = JsonDocument.Parse(File.ReadAllText(path));
 		var root = json.RootElement;
-		var discord = root.GetProperty("DISCORD_TOKEN").GetString() ?? "";
+		var discord = root.GetProperty("HARMONYBOT_TOKEN").GetString() ?? "";
 		var openai = root.GetProperty("OPENAI_API_KEY").GetString() ?? "";
 
 		if (string.IsNullOrWhiteSpace(discord) || string.IsNullOrWhiteSpace(openai))
-			throw new InvalidOperationException("~/.api-keys is missing DISCORD_TOKEN or OPENAI_API_KEY");
+			throw new InvalidOperationException("~/.api-keys is missing HARMONYBOT_TOKEN or OPENAI_API_KEY");
 
 		return new Config { DiscordToken = discord, OpenAIApiKey = openai };
 	}
