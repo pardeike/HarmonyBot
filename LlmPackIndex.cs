@@ -6,6 +6,13 @@ namespace HarmonyBot;
 
 public sealed class LlmPackIndex(List<LlmPackIndex.Card> cards)
 {
+	private static readonly HashSet<string> StopWords = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"a", "an", "and", "are", "as", "at", "be", "but", "by", "can", "do", "does", "for", "from", "get", "has", "have", "how",
+		"i", "if", "in", "is", "it", "me", "my", "not", "of", "on", "or", "so", "that", "the", "this", "to", "up", "was", "we",
+		"what", "when", "where", "why", "with", "you", "your"
+	};
+
 	public sealed record Card(
 		[property: JsonPropertyName("id")] string Id,
 		[property: JsonPropertyName("kind")] string Kind,
@@ -51,7 +58,15 @@ public sealed class LlmPackIndex(List<LlmPackIndex.Card> cards)
 	{
 		if (!IsLoaded)
 			return [];
-		var terms = query.ToLowerInvariant().Split([' ', '\t', '\r', '\n', '.', ',', '(', ')', '[', ']', ':', ';', '#', '/', '\\'], StringSplitOptions.RemoveEmptyEntries);
+		var terms = query.ToLowerInvariant()
+			.Split([' ', '\t', '\r', '\n', '.', ',', '(', ')', '[', ']', ':', ';', '#', '/', '\\', '"', '\'', '`'], StringSplitOptions.RemoveEmptyEntries)
+			.Where(t => t.Length > 2 && !StopWords.Contains(t))
+			.Distinct()
+			.Take(80)
+			.ToArray();
+		if (terms.Length == 0)
+			return [];
+
 		float Score(Card c)
 		{
 			var s = (c.CanonicalText ?? "").ToLowerInvariant();

@@ -14,7 +14,9 @@ public sealed class Config
 	[Configuration(confidential: true)] public required string DiscordToken { get; init; }
 	[Configuration(confidential: true)] public required string OpenAIApiKey { get; init; }
 
-	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-4o");
+	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-5.5");
+	[Configuration] public string ReasoningEffort { get; init; } = GetEnvString("REASONING_EFFORT", "high").ToLowerInvariant();
+	[Configuration] public bool WebSearchEnabled { get; init; } = GetEnvBool("WEB_SEARCH_ENABLED", true);
 	[Configuration] public string LlmPackUri { get; init; } = GetEnvString("LLM_PACK_URI", "https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl");
 
 	[Configuration] public int MaxCardCount { get; init; } = GetEnvInt("MAX_CARD_COUNT", 10);
@@ -23,7 +25,8 @@ public sealed class Config
 	[Configuration] public int GroupMaxGapSec { get; init; } = GetEnvInt("GROUP_MAX_GAP_SEC", 300); // 5 min
 	[Configuration] public int GroupMaxDurationSec { get; init; } = GetEnvInt("GROUP_MAX_DURATION_SEC", 1800); // 30 min
 	[Configuration] public int GroupMaxInterposts { get; init; } = GetEnvInt("GROUP_MAX_INTERPOSTS", 6);
-	[Configuration] public int CtxPrependBefore { get; init; } = GetEnvInt("CTX_PREPEND_BEFORE", 3);
+	[Configuration] public int CtxPrependBefore { get; init; } = GetEnvInt("CTX_PREPEND_BEFORE", 12);
+	[Configuration] public int CtxAppendAfter { get; init; } = GetEnvInt("CTX_APPEND_AFTER", 20);
 	[Configuration] public int CtxMaxMessages { get; init; } = GetEnvInt("CTX_MAX_MESSAGES", 60);
 	[Configuration] public int CtxMaxChars { get; init; } = GetEnvInt("CTX_MAX_CHARS", 100_000);
 	[Configuration] public bool IncludeInterposts { get; init; } = GetEnvBool("CTX_INCLUDE_INTERPOSTS", true);

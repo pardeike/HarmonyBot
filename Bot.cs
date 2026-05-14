@@ -10,9 +10,12 @@ namespace HarmonyBot;
 
 public sealed class Bot : IDisposable
 {
+	private const int TargetAnswerMaxChars = 1400;
+	private const int DiscordMessageMaxChars = 2000;
+
 	private readonly Config _cfg;
 	private readonly DiscordSocketClient _client;
-	private readonly OpenAIResponseClient _chat;
+	private readonly ResponsesClient _chat;
 	private readonly HttpClient _httpClient;
 	private readonly LlmPackIndex _llm = new([]);
 
@@ -73,7 +76,7 @@ public sealed class Bot : IDisposable
 		_client.ButtonExecuted += OnButtonAsync;
 
 		// OpenAI client
-		_chat = new OpenAIResponseClient(_cfg.ChatModel, _cfg.OpenAIApiKey);
+		_chat = new ResponsesClient(_cfg.OpenAIApiKey);
 
 		// HTTP client for downloading attachments
 		_httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
@@ -164,37 +167,56 @@ public sealed class Bot : IDisposable
 
 		Divider("message-cmd start", ("anchor", anchor.Id), ("author", anchor.Author.Username));
 
-		// Build logical group FORWARD from the anchor; also prepend a few messages before the anchor
-		var context = await CollectGroupForwardAsync(chan, anchor, anchor.Author.Id, _cfg);
+		// Build surrounding discussion plus the target author's forward burst.
+		var context = await CollectContextAsync(chan, anchor, _cfg);
 
 		var targetUser = anchor.Author as SocketGuildUser;
 		var targetName = targetUser?.DisplayName ?? anchor.Author.GlobalName ?? anchor.Author.Username;
 
 		var contextBlock = await BuildContextBlockAsync(_log, context, anchor, GetAttachmentTextAsync);
+		_log.LogInformation("context.collected messages={messages} chars={chars} around_before={before} around_after={after}",
+			context.Count, contextBlock.Length, _cfg.CtxPrependBefore, _cfg.CtxAppendAfter);
 		var ragHints = BuildRagBlock(contextBlock, out var ragHintCount);
 		var sys = await LoadSystemPromptAsync();
 
+		var browsingInstructions = _cfg.WebSearchEnabled
+			? "\nYou have live web access through the web_search tool. For Harmony-specific questions, use it when the Discord excerpts "
+				+ "and selected reference cards do not contain enough concrete API names, version behavior, examples, or source evidence. "
+				+ "Prioritize https://harmony.pardeike.net and https://github.com/pardeike/Harmony; use other sources only when they directly clarify the issue."
+			: "";
 		var instructions = ragHintCount > 0
-			? $"{sys}\n{ragHints}"
-			: $"{sys}\nYou may browse https://harmony.pardeike.net and https://github.com/pardeike/Harmony for additional context.";
-		var userPrompt = $"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max 1400 character long, helpful reply directly addressing {targetName}'s message with id {anchor.Id} and related messages.";
+			? $"{sys}\n{ragHints}{browsingInstructions}"
+			: $"{sys}{browsingInstructions}";
+		var userPrompt = $"Channel excerpts (oldest -> newest):{contextBlock}\nTask: Write a max {TargetAnswerMaxChars} character long, helpful reply directly addressing "
+			+ $"{targetName}'s message with id {anchor.Id} and related messages. Be specific to Harmony and the user's code/problem; "
+			+ "do not give generic troubleshooting unless the missing context makes that unavoidable.";
 		var promptText = instructions + "\n\n" + userPrompt;
-		_log.LogInformation("ai.request model={model} prompt_chars={chars} rag_hits={hits}\n{preview}",
-			_cfg.ChatModel, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
+		_log.LogInformation("ai.request model={model} reasoning_effort={effort} web_search={webSearch} prompt_chars={chars} rag_hits={hits}\n{preview}",
+			_cfg.ChatModel, _cfg.ReasoningEffort, _cfg.WebSearchEnabled, promptText.Length, ragHintCount, ApplyAiLogPolicy(promptText));
 
-		var opts = new ResponseCreationOptions { Instructions = instructions };
-		if (ragHintCount == 0)
+		var opts = new CreateResponseOptions
+		{
+			Model = _cfg.ChatModel,
+			Instructions = instructions,
+			ReasoningOptions = new ResponseReasoningOptions
+			{
+				ReasoningEffortLevel = ParseReasoningEffort(_cfg.ReasoningEffort)
+			}
+		};
+		if (_cfg.WebSearchEnabled)
 			opts.Tools.Add(ResponseTool.CreateWebSearchTool());
+		opts.InputItems.Add(ResponseItem.CreateUserMessageItem(userPrompt));
 
 		var swAi = Stopwatch.StartNew();
-		var completion = await _chat.CreateResponseAsync(userPrompt, opts);
+		var completion = await _chat.CreateResponseAsync(opts);
 		swAi.Stop();
 
-		var draft = string.Concat(completion.Value.OutputItems
+		var rawDraft = string.Concat(completion.Value.OutputItems
 			.OfType<MessageResponseItem>()
-			.SelectMany(i => i.Content.Select(p => p.Text)));
-		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars}\n{preview}",
-			swAi.ElapsedMilliseconds, draft.Length, ApplyAiLogPolicy(draft));
+			.SelectMany(i => i.Content.Select(p => p.Text))).Trim();
+		var draft = DiscordMessageSizeClamp(rawDraft);
+		_log.LogInformation("ai.response latency_ms={ms} output_chars={chars} draft_chars={draftChars}\n{preview}",
+			swAi.ElapsedMilliseconds, rawDraft.Length, draft.Length, ApplyAiLogPolicy(draft));
 
 		var approvalId = Guid.NewGuid().ToString("N");
 		lock (_lock)
@@ -265,7 +287,7 @@ public sealed class Bot : IDisposable
 				var posted = new List<ulong>();
 				if (_client.GetChannel(p.ChannelId) is IMessageChannel chan)
 				{
-					foreach (var chunk in Splitter.ChunkForDiscord(p.Draft))
+					foreach (var chunk in Splitter.ChunkForDiscord(p.Draft, DiscordMessageMaxChars))
 					{
 						var msg = await chan.SendMessageAsync(chunk, messageReference: new MessageReference(p.TargetMessageId));
 						posted.Add(msg.Id);
@@ -288,28 +310,39 @@ public sealed class Bot : IDisposable
 		}
 	}
 
-	// ---------- Grouping / Context collection (forward from anchor) ----------
+	// ---------- Grouping / Context collection ----------
 
-	private static async Task<List<IMessage>> CollectGroupForwardAsync(
-		 SocketTextChannel channel, SocketMessage anchor, ulong authorId, Config cfg)
+	private static async Task<List<IMessage>> CollectContextAsync(SocketTextChannel channel, SocketMessage anchor, Config cfg)
 	{
-		var list = new List<IMessage>();
+		var messages = new Dictionary<ulong, IMessage>();
+		if (cfg.CtxPrependBefore > 0)
+		{
+			var before = await channel.GetMessagesAsync(anchor.Id, Direction.Before, cfg.CtxPrependBefore).FlattenAsync();
+			foreach (var message in before)
+				AddIfNearAnchor(messages, message, anchor, cfg);
+		}
+		messages[anchor.Id] = anchor;
 
-		// Prepend some context before anchor (chronological)
-		var before = await channel.GetMessagesAsync(anchor.Id, Direction.Before, cfg.CtxPrependBefore).FlattenAsync();
-		list.AddRange(before.Reverse());
-		list.Add(anchor);
-		static int MessageLength(IMessage msg) =>
-				  (msg.Content?.Length ?? 0) + msg.Attachments.Sum(a => a.Description?.Length ?? 0);
-		var totalChars = list.Sum(MessageLength);
-		if (totalChars >= cfg.CtxMaxChars)
-			return list;
+		if (cfg.CtxAppendAfter > 0)
+		{
+			var after = await channel.GetMessagesAsync(anchor.Id, Direction.After, cfg.CtxAppendAfter).FlattenAsync();
+			foreach (var message in after)
+				AddIfNearAnchor(messages, message, anchor, cfg);
+		}
 
+		await CollectTargetAuthorForwardBurstAsync(channel, anchor, cfg, message => AddIfNearAnchor(messages, message, anchor, cfg));
+
+		return LimitContext(messages.Values, anchor, cfg);
+	}
+
+	private static async Task CollectTargetAuthorForwardBurstAsync(
+		 SocketTextChannel channel, SocketMessage anchor, Config cfg, Action<IMessage> addMessage)
+	{
 		var lastAuthorTime = anchor.Timestamp;
 		ulong? cursor = anchor.Id;
 		var interposts = 0;
 
-		while (list.Count < cfg.CtxMaxMessages)
+		while (true)
 		{
 			var page = (await channel.GetMessagesAsync(cursor!.Value, Direction.After, 100).FlattenAsync())
 					  .OrderBy(m => m.Timestamp)
@@ -329,15 +362,14 @@ public sealed class Bot : IDisposable
 					break;
 				}
 
-				if (m.Author.Id == authorId)
+				if (m.Author.Id == anchor.Author.Id)
 				{
 					var gap = (m.Timestamp - lastAuthorTime).TotalSeconds;
 					if (gap > cfg.GroupMaxGapSec)
 					{ cursor = null; break; } // next burst → stop
-					list.Add(m);
+					addMessage(m);
 					lastAuthorTime = m.Timestamp;
 					interposts = 0;
-					totalChars += MessageLength(m);
 				}
 				else
 				{
@@ -347,21 +379,51 @@ public sealed class Bot : IDisposable
 					interposts++;
 					if (interposts > cfg.GroupMaxInterposts)
 					{ cursor = null; break; }
-					list.Add(m); // keep limited interposts for context
-					totalChars += MessageLength(m);
+					addMessage(m); // keep limited interposts for context
 				}
-
-				// character budget to avoid over-long prompts
-				if (totalChars >= cfg.CtxMaxChars)
-				{ cursor = null; break; }
 			}
 
 			if (cursor is null)
 				break;
 			cursor = last!.Id;
 		}
+	}
 
-		return list;
+	private static void AddIfNearAnchor(Dictionary<ulong, IMessage> messages, IMessage message, SocketMessage anchor, Config cfg)
+	{
+		if (message.Id == anchor.Id)
+		{
+			messages[message.Id] = message;
+			return;
+		}
+
+		if (Math.Abs((message.Timestamp - anchor.Timestamp).TotalSeconds) > cfg.GroupMaxDurationSec)
+			return;
+
+		messages.TryAdd(message.Id, message);
+	}
+
+	private static List<IMessage> LimitContext(IEnumerable<IMessage> messages, SocketMessage anchor, Config cfg)
+	{
+		static int MessageLength(IMessage msg) =>
+				  (msg.Content?.Length ?? 0) + msg.Attachments.Sum(a => a.Description?.Length ?? 0);
+
+		var result = new List<IMessage>();
+		var totalChars = 0;
+		foreach (var message in messages.OrderBy(m => m.Timestamp).ThenBy(m => m.Id))
+		{
+			var length = MessageLength(message);
+			var isAnchor = message.Id == anchor.Id;
+			if (!isAnchor && (result.Count >= cfg.CtxMaxMessages || totalChars + length > cfg.CtxMaxChars))
+				continue;
+
+			result.Add(message);
+			totalChars += length;
+		}
+
+		if (!result.Any(message => message.Id == anchor.Id))
+			result.Add(anchor);
+		return result.OrderBy(m => m.Timestamp).ThenBy(m => m.Id).ToList();
 	}
 
 	// ---------- Prompt building helpers ----------
@@ -438,9 +500,7 @@ public sealed class Bot : IDisposable
 		ragHits = 0;
 		if (!_llm.IsLoaded)
 			return "";
-		var last = contextBlock.Split('\n', StringSplitOptions.RemoveEmptyEntries)
-									  .LastOrDefault(l => l.Contains(" <<TARGET>>")) ?? contextBlock;
-		var query = last.Replace(" <<TARGET>>", "");
+		var query = BuildRagQuery(contextBlock);
 		var hits = _llm.Search(query, k: _cfg.MaxCardCount);
 		ragHits = hits.Count;
 		if (ragHits == 0)
@@ -449,15 +509,51 @@ public sealed class Bot : IDisposable
 		_log.LogInformation("Using {cardCount} cards as context", ragHits);
 
 		var sb = new StringBuilder().AppendLine("Harmony reference hints (selected):");
-		foreach (var h in hits)
+		foreach (var h in hits.Take(_cfg.MaxCardCount))
 		{
 			_ = sb.AppendLine($"- {h.Signature ?? h.Id}");
 			if (!string.IsNullOrWhiteSpace(h.Summary))
 				_ = sb.AppendLine($"  {h.Summary}");
+			if (!string.IsNullOrWhiteSpace(h.Remarks))
+				_ = sb.AppendLine($"  {SingleLineClamp(h.Remarks, 360)}");
+			var example = h.Examples?.FirstOrDefault(e => !string.IsNullOrWhiteSpace(e.Code));
+			if (example is not null)
+				_ = sb.AppendLine($"  [example] {SingleLineClamp(example.Code!, 420)}");
 			if (!string.IsNullOrWhiteSpace(h.DocUrl))
 				_ = sb.AppendLine($"  [docs] {h.DocUrl}");
 		}
 		return sb.ToString();
+	}
+
+	private static string BuildRagQuery(string contextBlock)
+	{
+		var lines = contextBlock.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+		var target = lines.LastOrDefault(l => l.Contains(" <<TARGET>>", StringComparison.Ordinal))?.Replace(" <<TARGET>>", "") ?? contextBlock;
+		var sb = new StringBuilder()
+			.AppendLine(target)
+			.AppendLine(target);
+
+		foreach (var line in lines.Where(IsHarmonySignalLine).Take(20))
+			_ = sb.AppendLine(line.Replace(" <<TARGET>>", ""));
+
+		return sb.ToString();
+	}
+
+	private static bool IsHarmonySignalLine(string line)
+	{
+		string[] signals =
+		[
+			"Harmony", "HarmonyPatch", "AccessTools", "TargetMethod", "Prepare", "Cleanup", "Prefix", "Postfix", "Transpiler",
+			"Finalizer", "ReversePatch", "PatchAll", "__instance", "__result", "__state", "___", "CodeInstruction",
+			"MethodInfo", "ConstructorInfo", "BindingFlags", "Traverse", "priority", "before", "after", "generic", "iterator", "async"
+		];
+		return signals.Any(signal => line.Contains(signal, StringComparison.OrdinalIgnoreCase));
+	}
+
+	private static string SingleLineClamp(string text, int max)
+	{
+		var line = string.Join(" ", text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()));
+		return line.Length <= max ? line : line[..(max - 2)] + " …";
 	}
 
 	// ---------- Logging helpers ----------
@@ -474,6 +570,17 @@ public sealed class Bot : IDisposable
 			return "You are a concise, pragmatic Harmony support assistant. Prefer short, correct answers grounded in the provided excerpts.";
 		}
 	}
+
+	private static ResponseReasoningEffortLevel ParseReasoningEffort(string effort) => effort.Trim().ToLowerInvariant() switch
+	{
+		"none" => ResponseReasoningEffortLevel.None,
+		"minimal" => ResponseReasoningEffortLevel.Minimal,
+		"low" => ResponseReasoningEffortLevel.Low,
+		"medium" => ResponseReasoningEffortLevel.Medium,
+		"high" => ResponseReasoningEffortLevel.High,
+		"xhigh" or "extra-high" or "extra_high" => new ResponseReasoningEffortLevel("xhigh"),
+		_ => ResponseReasoningEffortLevel.High
+	};
 
 	private static LogLevel MapLevel(LogSeverity s) => s switch
 	{
@@ -501,8 +608,49 @@ public sealed class Bot : IDisposable
 	};
 
 
-	private static string DiscordMessageSizeClamp(string s, int max = 2000)
-				=> s.Length <= max ? s : s[..(max - 2)] + " …";
+	private static string DiscordMessageSizeClamp(string s, int max = DiscordMessageMaxChars)
+	{
+		if (s.Length <= max)
+			return s;
+
+		const string suffix = " …";
+		var limit = max - suffix.Length;
+		var slice = s[..limit];
+		var cut = FindLastNaturalBreak(slice, limit);
+		var result = slice[..cut].TrimEnd() + suffix;
+
+		if (CountCodeFences(result) % 2 == 0)
+			return result;
+
+		const string closeFence = "\n```";
+		var closeFenceLimit = max - closeFence.Length;
+		if (result.Length > closeFenceLimit)
+			result = result[..closeFenceLimit].TrimEnd();
+		return result + closeFence;
+	}
+
+	private static int FindLastNaturalBreak(string slice, int fallback)
+	{
+		var minimum = (int)(fallback * 0.65);
+		var paragraphBreak = slice.LastIndexOf("\n\n", StringComparison.Ordinal);
+		if (paragraphBreak >= minimum)
+			return paragraphBreak;
+
+		var lineBreak = slice.LastIndexOf('\n');
+		if (lineBreak >= minimum)
+			return lineBreak;
+
+		var sentenceBreak = Math.Max(slice.LastIndexOf('.'), Math.Max(slice.LastIndexOf('!'), slice.LastIndexOf('?')));
+		return sentenceBreak >= minimum ? sentenceBreak + 1 : fallback;
+	}
+
+	private static int CountCodeFences(string text)
+	{
+		var fences = 0;
+		for (var idx = text.IndexOf("```", StringComparison.Ordinal); idx >= 0; idx = text.IndexOf("```", idx + 3, StringComparison.Ordinal))
+			fences++;
+		return fences;
+	}
 
 	public void Dispose()
 	{
