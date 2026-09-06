@@ -14,8 +14,8 @@ public sealed class Config
 	[Configuration(confidential: true)] public required string DiscordToken { get; init; }
 	[Configuration(confidential: true)] public required string OpenAIApiKey { get; init; }
 
-	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-5.5");
-	[Configuration] public string ReasoningEffort { get; init; } = GetEnvString("REASONING_EFFORT", "high").ToLowerInvariant();
+	[Configuration] public string ChatModel { get; init; } = GetEnvString("CHAT_MODEL", "gpt-6-astra");
+	[Configuration] public string ReasoningEffort { get; init; } = GetEnvString("REASONING_EFFORT", "low").ToLowerInvariant();
 	[Configuration] public bool WebSearchEnabled { get; init; } = GetEnvBool("WEB_SEARCH_ENABLED", true);
 	[Configuration] public string LlmPackUri { get; init; } = GetEnvString("LLM_PACK_URI", "https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl");
 

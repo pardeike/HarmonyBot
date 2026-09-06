@@ -4,8 +4,8 @@
       "commandName": "Project",
       "workingDirectory": "C:\\Users\\Brrainz\\Source\\Repos\\HarmonyBot",
       "environmentVariables": {
-        "CHAT_MODEL": "gpt-5.5",
-        "REASONING_EFFORT": "high",
+        "CHAT_MODEL": "gpt-6-astra",
+        "REASONING_EFFORT": "low",
         "WEB_SEARCH_ENABLED": "true"
       }
     }

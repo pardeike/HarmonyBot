@@ -27,8 +27,8 @@ The Discord bot for the official discord support server for the official Lib.Har
 - `API_KEYS_FILE` (default: `~/.api-keys`): the path to the API keys file
 - `LOG_FORMAT` (default: `text`): the log format, either `text` or `json`.
 - `LOG_LEVEL` (default: `Information`): the log level, either `Trace`, `Debug`, `Information`, `Warning`, `Error`, or `Critical`.
-- `CHAT_MODEL` (default: `gpt-5.5`): the OpenAI Responses API model to use.
-- `REASONING_EFFORT` (default: `high`): reasoning effort for models that support thinking (`none`, `low`, `medium`, `high`, or `xhigh` for `gpt-5.5`; `minimal` is also accepted for older models that support it).
+- `CHAT_MODEL` (default: `gpt-6-astra`): the OpenAI Responses API model to use.
+- `REASONING_EFFORT` (default: `low`): reasoning effort for models that support thinking. `low` is the lowest level supported by `gpt-6-astra`. Accepted configuration values are `none`, `minimal`, `low`, `medium`, `high`, and `xhigh`; model support varies.
 - `WEB_SEARCH_ENABLED` (default: `true`): whether to give the model the hosted web search tool for Harmony docs/source lookups.
 - `LLM_PACK_URI` (default: `https://harmony.pardeike.net/llm-pack/harmony.cards.jsonl`): the URI of the LLM pack to use.
 - `MAX_CARD_COUNT` (default: `10`): the maximum number of cards to use from the LLM pack.
